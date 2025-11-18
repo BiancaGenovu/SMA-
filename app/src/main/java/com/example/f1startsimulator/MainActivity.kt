@@ -5,6 +5,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -21,31 +22,43 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.f1startsimulator.ui.theme.F1StartSimulatorTheme
-import kotlinx.coroutines.delay // Importăm funcția "delay"
-import kotlinx.coroutines.launch // Importăm funcția "launch"
-import kotlin.random.Random // Importăm generatorul de numere random
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.random.Random
+
+// --- PASUL 1: Definim stările posibile ale jocului ---
+enum class StareJoc {
+    GATA,       // Așteaptă apăsarea butonului "Start"
+    START,      // Luminile se aprind secvențial
+    CURSA,      // Luminile s-au stins, cronometrul merge
+    FURAT,      // Start furat (ai apăsat prea devreme)
+    TERMINAT    // Timpul a fost înregistrat
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // Am setat fundalul principal pe negru, ca să semene mai mult cu F1
         setContent {
             F1StartSimulatorTheme {
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
-                    containerColor = Color.Black // Setăm fundalul negru
+                    containerColor = Color.Black
                 ) { innerPadding ->
                     SemaforUI(
                         modifier = Modifier
@@ -61,67 +74,76 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun SemaforUI(modifier: Modifier = Modifier) {
 
-    // --- PASUL 1: Creăm "Starea" (State) ---
-    // Aceasta este o listă "observabilă". Când schimbăm o culoare din ea,
-    // Compose va redesena automat bulina corespunzătoare.
-    // Inițial, toate sunt gri (stinse).
     val culoriBuline = remember {
-        mutableStateListOf(
-            Color.Gray,
-            Color.Gray,
-            Color.Gray,
-            Color.Gray,
-            Color.Gray
-        )
+        mutableStateListOf(Color.Gray, Color.Gray, Color.Gray, Color.Gray, Color.Gray)
     }
-
-    // --- PASUL 2: Creăm un "Scope" pentru Corutine ---
-    // Acesta este "motorul" care ne permite să rulăm logica cu întârzieri (delay).
     val coroutineScope = rememberCoroutineScope()
 
-    // Funcția care pornește secvența de start
+    // --- PASUL 2: Variabile noi pentru Stare și Timp ---
+    var stareJoc by remember { mutableStateOf(StareJoc.GATA) }
+    var timpReactie by remember { mutableStateOf(0L) } // 0L înseamnă 0 Long (numeric)
+    var timpStart by remember { mutableStateOf(0L) }
+
     fun pornesteStartul() {
-        // Lansăm un "job" nou (o corutină) pe care îl putem rula în fundal
         coroutineScope.launch {
-            // --- Logica Jocului (Săptămâna 2) ---
+            // 1. Resetează tot
+            timpReactie = 0L
+            culoriBuline.fill(Color.Gray)
+            stareJoc = StareJoc.START // Trecem în starea "START"
 
-            // 1. Resetează toate bulinele la gri (pentru cazul în care jucăm din nou)
+            // 2. Aprinde luminile secvențial
             for (i in 0..4) {
-                culoriBuline[i] = Color.Gray
+                // Dacă jucătorul a furat startul, oprim corutina
+                if (stareJoc == StareJoc.FURAT) return@launch
+                delay(1000)
+                culoriBuline[i] = Color.Red
             }
 
-            // 2. Aprinde bulinele secvențial
-            for (i in 0..4) {
-                delay(1000) // Așteaptă 1 secundă (1000 milisecunde)
-                culoriBuline[i] = Color.Red // Aprinde bulina 'i'
-            }
-
-            // 3. Așteaptă un timp random înainte de a le stinge
-            val timpRandom = Random.nextLong(1000, 4000) // Între 1 și 4 secunde
+            // 3. Așteaptă un timp random
+            val timpRandom = Random.nextLong(1000, 4000)
             delay(timpRandom)
 
-            // 4. Stinge toate bulinele
-            for (i in 0..4) {
-                culoriBuline[i] = Color.Gray
-            }
+            // Verificăm din nou dacă a furat startul
+            if (stareJoc == StareJoc.FURAT) return@launch
 
-            // AICI VOM PORNI CRONOMETRUL MAI TÂRZIU
+            // 4. Stinge luminile și pornește cronometrul
+            culoriBuline.fill(Color.Gray)
+            stareJoc = StareJoc.CURSA // Acum începe cursa!
+            timpStart = System.currentTimeMillis() // Salvăm timpul EXACT
         }
     }
 
 
-    // --- Interfața Grafică (UI) ---
-    Column( // Am schimbat `Box`-ul exterior cu `Column` ca să putem pune butonul sub el
-        modifier = modifier,
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            // Adăugăm .clickable la Column
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null // Fără efect vizual la clic
+            ) {
+
+                // Când se apasă oriunde pe ecran:
+
+                // 1. Dacă apăsăm în timp ce cronometrul merge (corect)
+                if (stareJoc == StareJoc.CURSA) {
+                    timpReactie = System.currentTimeMillis() - timpStart // Calculăm diferența
+                    stareJoc = StareJoc.TERMINAT
+                }
+                // 2. Dacă apăsăm prea devreme (în timp ce luminile se aprindeau)
+                else if (stareJoc == StareJoc.START) {
+                    stareJoc = StareJoc.FURAT
+                }
+            },
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center // Centrează totul pe ecran
+        verticalArrangement = Arrangement.Center
     ) {
 
-        // --- Acesta este suportul negru al semaforului ---
+
         Box(
             modifier = Modifier
-                .background(Color.DarkGray, shape = RoundedCornerShape(12.dp)) // Rotunjim colțurile
-                .padding(24.dp), // Spațiu în interiorul suportului
+                .background(Color.DarkGray, shape = RoundedCornerShape(12.dp))
+                .padding(24.dp),
             contentAlignment = Alignment.Center
         ) {
             Column(
@@ -130,34 +152,50 @@ fun SemaforUI(modifier: Modifier = Modifier) {
             ) {
                 val lightSpacing = 16.dp
 
-                // --- PASUL 3: Modificăm bucla `for` ---
-                // Acum bucla citește culoarea din lista "culoriBuline"
-                for (i in 0..4) { // Buclele în programare încep de obicei de la 0
-                    // Pasăm culoarea din "stare" către funcția noastră
+                for (i in 0..4) {
                     BulinaLuminoasa(color = culoriBuline[i])
-
-                    if (i < 4) { // Adaugă spațiu între 1-2, 2-3, 3-4, 4-5
+                    if (i < 4) {
                         Spacer(modifier = Modifier.height(lightSpacing))
                     }
                 }
             }
         }
 
-        // --- PASUL 4: Adăugăm Butonul "Start" ---
-        Spacer(modifier = Modifier.height(32.dp)) // Spațiu între semafor și buton
+        Spacer(modifier = Modifier.height(32.dp))
 
+        // Butonul "Start"
         Button(
+            enabled = (stareJoc == StareJoc.GATA || stareJoc == StareJoc.TERMINAT || stareJoc == StareJoc.FURAT),
             onClick = {
-                pornesteStartul() // Apelăm funcția noastră când se dă clic
+                pornesteStartul()
             },
             colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
         ) {
             Text(text = "START", fontSize = 20.sp)
         }
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+
+        if (stareJoc == StareJoc.TERMINAT) {
+            Text(
+                text = "${timpReactie} ms", // Afișăm timpul în milisecunde
+                color = Color.White,
+                fontSize = 40.sp,
+                fontWeight = FontWeight.Bold
+            )
+        } else if (stareJoc == StareJoc.FURAT) {
+            Text(
+                text = "START FURAT!",
+                color = Color.Red,
+                fontSize = 40.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
 
-// Funcția BulinaLuminoasa rămâne LA FEL
+
 @Composable
 fun BulinaLuminoasa(color: Color) {
     val lightSize = 60.dp
@@ -166,12 +204,12 @@ fun BulinaLuminoasa(color: Color) {
         modifier = Modifier
             .size(lightSize)
             .clip(CircleShape)
-            .background(color) // Folosim culoarea primită
+            .background(color)
     )
 }
 
-// Funcția Preview rămâne LA FEL
-@Preview(showBackground = true, backgroundColor = 0xFF000000) // Am setat fundal negru la preview
+
+@Preview(showBackground = true, backgroundColor = 0xFF000000)
 @Composable
 fun SemaforPreview() {
     F1StartSimulatorTheme {

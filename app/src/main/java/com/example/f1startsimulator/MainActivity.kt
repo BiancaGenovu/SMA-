@@ -48,7 +48,6 @@ import androidx.compose.ui.unit.sp
 import com.example.f1startsimulator.ui.theme.F1StartSimulatorTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 import kotlin.random.Random
 
 // --- PASUL 1: Actualizăm stările jocului ---

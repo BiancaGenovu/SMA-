@@ -5,6 +5,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.MediaPlayer
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -50,15 +51,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.random.Random
 
-// --- PASUL 1: Actualizăm stările jocului ---
 enum class StareJoc {
-    GATA,           // Așteaptă startul
-    START,          // Luminile se aprind
-    CURSA,          // Luminile s-au stins -> Așteaptă TAP (Motor)
-    MOTOR_PORNIT,   // S-a apăsat Tap -> Așteaptă ÎNCLINARE (Accelerație)
-    FURAT,          // Tap înainte de stingere
-    ORDINE_GRESITA, // Înclinare înainte de Tap (Motor)
-    TERMINAT        // Succes
+    GATA, START, CURSA, MOTOR_PORNIT, FURAT, ORDINE_GRESITA, TERMINAT
 }
 
 class MainActivity : ComponentActivity() {
@@ -67,15 +61,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             F1StartSimulatorTheme {
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
-                    containerColor = Color.Black
-                ) { innerPadding ->
-                    SemaforUI(
-                        modifier = Modifier
-                            .padding(innerPadding)
-                            .fillMaxSize()
-                    )
+                Scaffold(modifier = Modifier.fillMaxSize(), containerColor = Color.Black) { innerPadding ->
+                    SemaforUI(modifier = Modifier.padding(innerPadding).fillMaxSize())
                 }
             }
         }
@@ -84,71 +71,85 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun SemaforUI(modifier: Modifier = Modifier) {
-    // Contextul ne trebuie pentru a accesa senzorii
     val context = LocalContext.current
 
-    val culoriBuline = remember {
-        mutableStateListOf(Color.Gray, Color.Gray, Color.Gray, Color.Gray, Color.Gray)
+    // --- CODAREA SUNETELOR ---
+    // Folosim 'remember' ca să nu recreăm player-ul la fiecare milisecundă
+    // dar îl facem null-abil ca să îl putem elibera.
+    var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+
+    // Funcție helper ca să redăm ușor un sunet
+    fun redaSunet(idResursa: Int, loop: Boolean = false) {
+        // Oprim sunetul anterior dacă există
+        mediaPlayer?.release()
+
+        // Creăm și pornim noul sunet
+        mediaPlayer = MediaPlayer.create(context, idResursa)
+        mediaPlayer?.isLooping = loop // Dacă vrem să se repete (pt motor la relanti)
+        mediaPlayer?.start()
     }
+
+    // Când părăsim ecranul, oprim orice sunet (curățenie)
+    DisposableEffect(Unit) {
+        onDispose {
+            mediaPlayer?.release()
+        }
+    }
+    // -------------------------
+
+    val culoriBuline = remember { mutableStateListOf(Color.Gray, Color.Gray, Color.Gray, Color.Gray, Color.Gray) }
     val coroutineScope = rememberCoroutineScope()
 
     var stareJoc by remember { mutableStateOf(StareJoc.GATA) }
     var timpReactie by remember { mutableLongStateOf(0L) }
     var timpStart by remember { mutableLongStateOf(0L) }
 
-    // --- PASUL 2: Logică Senzori (Accelerometru) ---
-    // Această parte rulează DOAR când starea jocului se schimbă
     DisposableEffect(stareJoc) {
-        // Obținem acces la serviciul de senzori
         val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
         val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
 
-        // Definim ce se întâmplă când senzorul simte mișcare
         val sensorListener = object : SensorEventListener {
-            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
-                // Nu ne interesează asta
-            }
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
             override fun onSensorChanged(event: SensorEvent?) {
                 if (event == null) return
-
-                // 1. Citim toate cele 3 axe
                 val x = event.values[0]
                 val y = event.values[1]
                 val z = event.values[2]
 
-                // 2. Calculăm forța totală (Pitagora în 3D)
-                // Asta ne dă "cât de tare" se mișcă, indiferent de direcție
                 val fortaTotala = kotlin.math.sqrt(x * x + y * y + z * z)
-
-                // 3. Pragul de detectare
-                // 9.8 este doar gravitația. Punem 14 ca să cerem o mișcare clară peste gravitație.
                 val aMiscatBrusc = fortaTotala > 14.0
 
                 if (aMiscatBrusc) {
                     if (stareJoc == StareJoc.CURSA) {
                         stareJoc = StareJoc.ORDINE_GRESITA
+                        // SUNET: Eroare (ai accelerat prea devreme)
+                        redaSunet(R.raw.error)
                     }
                     else if (stareJoc == StareJoc.MOTOR_PORNIT) {
                         timpReactie = System.currentTimeMillis() - timpStart
                         stareJoc = StareJoc.TERMINAT
+                        // SUNET: Vroom! (Succes)
+                        redaSunet(R.raw.engine_start)
                     }
                 }
             }
         }
 
-        // Dacă suntem în timpul cursei (sau așteptăm mișcare), pornim senzorul
         if (stareJoc == StareJoc.CURSA || stareJoc == StareJoc.MOTOR_PORNIT) {
             sensorManager.registerListener(sensorListener, accelerometer, SensorManager.SENSOR_DELAY_GAME)
         }
 
-        // Când părăsim această stare sau se termină jocul, OPRIM senzorul (economisim baterie)
         onDispose {
             sensorManager.unregisterListener(sensorListener)
         }
     }
 
     fun pornesteStartul() {
+        // Oprim orice sunet vechi când începe jocul nou
+        mediaPlayer?.release()
+        mediaPlayer = null
+
         coroutineScope.launch {
             timpReactie = 0L
             culoriBuline.fill(Color.Gray)
@@ -166,7 +167,7 @@ fun SemaforUI(modifier: Modifier = Modifier) {
             if (stareJoc == StareJoc.FURAT) return@launch
 
             culoriBuline.fill(Color.Gray)
-            stareJoc = StareJoc.CURSA // Acum așteptăm TAP (Motor)
+            stareJoc = StareJoc.CURSA
             timpStart = System.currentTimeMillis()
         }
     }
@@ -178,22 +179,22 @@ fun SemaforUI(modifier: Modifier = Modifier) {
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
             ) {
-                // --- Logica de Tap (Ecran) ---
-
-                // 1. Dacă e CURSA (luminile stinse) -> Pornește Motorul
+                // LOGICA DE TAP
                 if (stareJoc == StareJoc.CURSA) {
                     stareJoc = StareJoc.MOTOR_PORNIT
-                    // Acum jocul așteaptă mișcarea (vezi logica de senzor mai sus)
+                    // SUNET: Motor la relanti (looping = true)
+                    // Va merge continuu până când accelerezi sau greșești
+                    redaSunet(R.raw.engine_idle, loop = true)
                 }
-                // 2. Dacă apasă prea devreme
                 else if (stareJoc == StareJoc.START) {
                     stareJoc = StareJoc.FURAT
+                    // SUNET: Eroare (Start furat)
+                    redaSunet(R.raw.error)
                 }
             },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        // Suportul semaforului
         Box(
             modifier = Modifier
                 .background(Color.DarkGray, shape = RoundedCornerShape(12.dp))
@@ -216,7 +217,6 @@ fun SemaforUI(modifier: Modifier = Modifier) {
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        // Butonul Start
         Button(
             enabled = (stareJoc != StareJoc.START && stareJoc != StareJoc.CURSA && stareJoc != StareJoc.MOTOR_PORNIT),
             onClick = { pornesteStartul() },
@@ -227,18 +227,16 @@ fun SemaforUI(modifier: Modifier = Modifier) {
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        // --- Afișare Mesaje ---
         when (stareJoc) {
             StareJoc.TERMINAT -> {
                 Text(text = "${timpReactie} ms", color = Color.Green, fontSize = 40.sp, fontWeight = FontWeight.Bold)
-                Text(text = "Excelent!", color = Color.White, fontSize = 20.sp)
+                Text(text = "Vroom!", color = Color.White, fontSize = 20.sp)
             }
             StareJoc.FURAT -> {
                 Text(text = "START FURAT!", color = Color.Red, fontSize = 32.sp, fontWeight = FontWeight.Bold)
             }
             StareJoc.ORDINE_GRESITA -> {
-                Text(text = "AI ACCELERAT PREA DEVREME!", color = Color.Red, fontSize = 24.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-                Text(text = "Întâi pornește motorul (Tap)!", color = Color.White, fontSize = 16.sp)
+                Text(text = "NU AI PORNIT MOTORUL!", color = Color.Red, fontSize = 24.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
             }
             StareJoc.MOTOR_PORNIT -> {
                 Text(text = "Motor Pornit! Accelerează!", color = Color.Yellow, fontSize = 24.sp)
@@ -251,12 +249,7 @@ fun SemaforUI(modifier: Modifier = Modifier) {
 @Composable
 fun BulinaLuminoasa(color: Color) {
     val lightSize = 60.dp
-    Box(
-        modifier = Modifier
-            .size(lightSize)
-            .clip(CircleShape)
-            .background(color)
-    )
+    Box(modifier = Modifier.size(lightSize).clip(CircleShape).background(color))
 }
 
 @Preview(showBackground = true, backgroundColor = 0xFF000000)

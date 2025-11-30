@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "475692121968",
+    "project_id": "f1-start-simulator-99ec0",
+    "storage_bucket": "f1-start-simulator-99ec0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:475692121968:android:0d6ccc79cdf418e33099b5",
+        "android_client_info": {
+          "package_name": "com.example.f1startsimulator"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBhbOrjyicf_f7vEXfdNcy4_-LiIL1NTOg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
